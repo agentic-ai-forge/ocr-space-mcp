@@ -1,0 +1,47 @@
+stages:
+  - lint
+  - test
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+
+cache:
+  paths:
+    - .cache/pip
+    - .cache/uv
+    - .venv
+
+.python-base:
+  image: python:3.11-slim
+  before_script:
+    - pip install uv
+    - uv sync --extra dev
+
+ruff-lint:
+  extends: .python-base
+  stage: lint
+  script:
+    - uv run ruff check --output-format=gitlab .
+  allow_failure: false
+
+ruff-format:
+  extends: .python-base
+  stage: lint
+  script:
+    - uv run ruff format --check .
+  allow_failure: false
+
+pytest:
+  extends: .python-base
+  stage: test
+  script:
+    - uv run pytest --cov=ocr_space_mcp --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=report.xml -v
+  coverage: '/TOTAL.*\s+(\d+%)/'
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml

@@ -1,0 +1,14 @@
+# OCR.space API Configuration
+# Copy to .envrc and run `direnv allow`
+
+# Free Tier API Key (required)
+# Get your free key at: https://ocr.space/ocrapi/freekey
+export OCR_SPACE_API_KEY="your-free-api-key-here"
+
+# PRO Tier API Key (optional, for GDPR-compliant EU processing)
+# Sign up at: https://ocr.space/ocrapi
+# export OCR_SPACE_PRO_API_KEY="your-pro-api-key-here"
+
+# PRO Tier EU Endpoint (optional, for GDPR compliance)
+# Default is US endpoint. EU endpoints provided after PRO signup.
+# export OCR_SPACE_PRO_ENDPOINT="https://eu.api.ocr.space/parse/image"
