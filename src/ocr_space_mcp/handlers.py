@@ -118,14 +118,16 @@ async def handle_split_pdf(arguments: dict[str, Any]) -> list[TextContent]:
 
     file_size = path.stat().st_size
     if file_size <= size_limit:
-        return [TextContent(
-            type="text",
-            text=(
-                f"File is already within {tier.value} tier limit "
-                f"({file_size / (1024 * 1024):.2f} MB <= "
-                f"{size_limit / (1024 * 1024):.0f} MB). No splitting needed."
-            ),
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    f"File is already within {tier.value} tier limit "
+                    f"({file_size / (1024 * 1024):.2f} MB <= "
+                    f"{size_limit / (1024 * 1024):.0f} MB). No splitting needed."
+                ),
+            )
+        ]
 
     chunks = split_pdf_by_size(str(path), size_limit, output_dir)
     lines = _format_split_result(chunks, file_size, size_limit, tier)

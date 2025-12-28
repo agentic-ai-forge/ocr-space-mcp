@@ -48,14 +48,12 @@ class OCRSpaceClient:
         if tier == Tier.PRO:
             if not self._settings.pro_api_key:
                 raise ValueError(
-                    "OCR_SPACE_PRO_API_KEY not set. "
-                    "Set it in your environment or use tier='free'."
+                    "OCR_SPACE_PRO_API_KEY not set. Set it in your environment or use tier='free'."
                 )
             return self._settings.pro_api_key.get_secret_value()
         if not self._settings.api_key:
             raise ValueError(
-                "OCR_SPACE_API_KEY not set. "
-                "Get a free key at https://ocr.space/ocrapi/freekey"
+                "OCR_SPACE_API_KEY not set. Get a free key at https://ocr.space/ocrapi/freekey"
             )
         return self._settings.api_key.get_secret_value()
 

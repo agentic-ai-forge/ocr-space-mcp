@@ -16,20 +16,17 @@ from ocr_space_mcp.config import (
     FREE_ENDPOINT,
     FREE_SIZE_LIMIT,
     PRO_SIZE_LIMIT,
-    Settings,
     get_settings,
 )
 from ocr_space_mcp.models import (
     LANGUAGES,
     OCRResponse,
-    ParsedResult,
     Tier,
     get_content_type,
     is_image,
     is_pdf,
 )
 from ocr_space_mcp.server import call_tool, list_tools
-from ocr_space_mcp.tools import get_tools
 from ocr_space_mcp.utils import (
     compress_image,
     extract_text_only,
