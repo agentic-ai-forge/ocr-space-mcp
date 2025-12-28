@@ -11,24 +11,29 @@ import httpx
 import pytest
 import respx
 
-from ocr_space_mcp.server import (
+from ocr_space_mcp.client import OCROptions, OCRSpaceClient, get_client
+from ocr_space_mcp.config import (
     FREE_ENDPOINT,
     FREE_SIZE_LIMIT,
-    LANGUAGES,
     PRO_SIZE_LIMIT,
+    Settings,
+    get_settings,
+)
+from ocr_space_mcp.models import (
+    LANGUAGES,
+    OCRResponse,
+    ParsedResult,
     Tier,
-    call_ocr_api,
-    call_tool,
+    get_content_type,
+    is_image,
+    is_pdf,
+)
+from ocr_space_mcp.server import call_tool, list_tools
+from ocr_space_mcp.tools import get_tools
+from ocr_space_mcp.utils import (
     compress_image,
     extract_text_only,
     format_ocr_result,
-    get_api_key,
-    get_content_type,
-    get_endpoint,
-    get_size_limit,
-    is_image,
-    is_pdf,
-    list_tools,
     save_result,
     split_pdf_by_size,
 )
@@ -125,49 +130,69 @@ class TestConfiguration:
 
     def test_get_api_key_free(self, mock_env_free):
         """Test getting free tier API key."""
-        key = get_api_key(Tier.FREE)
+        # Clear the cache to pick up new env vars
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
+        key = client._get_api_key(Tier.FREE)
         assert key == "test-free-key"
 
     def test_get_api_key_pro(self, mock_env_pro):
         """Test getting PRO tier API key."""
-        key = get_api_key(Tier.PRO)
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
+        key = client._get_api_key(Tier.PRO)
         assert key == "test-pro-key"
 
     def test_get_api_key_free_missing(self):
         """Test error when free key is missing."""
+        get_settings.cache_clear()
         with patch.dict(os.environ, {}, clear=True):
+            get_settings.cache_clear()
+            client = OCRSpaceClient()
             with pytest.raises(ValueError, match="OCR_SPACE_API_KEY not set"):
-                get_api_key(Tier.FREE)
+                client._get_api_key(Tier.FREE)
 
     def test_get_api_key_pro_missing(self, mock_env_free):
         """Test error when PRO key is missing but requested."""
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
         with pytest.raises(ValueError, match="OCR_SPACE_PRO_API_KEY not set"):
-            get_api_key(Tier.PRO)
+            client._get_api_key(Tier.PRO)
 
-    def test_get_endpoint_free(self):
+    def test_get_endpoint_free(self, mock_env_free):
         """Test free tier endpoint."""
-        endpoint = get_endpoint(Tier.FREE)
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
+        endpoint = client._get_endpoint(Tier.FREE)
         assert endpoint == FREE_ENDPOINT
 
     def test_get_endpoint_pro_default(self, mock_env_free):
         """Test PRO tier uses default endpoint if not configured."""
-        endpoint = get_endpoint(Tier.PRO)
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
+        endpoint = client._get_endpoint(Tier.PRO)
         assert "apipro" in endpoint
 
     def test_get_endpoint_pro_custom(self, mock_env_pro):
         """Test PRO tier uses custom EU endpoint."""
-        endpoint = get_endpoint(Tier.PRO)
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
+        endpoint = client._get_endpoint(Tier.PRO)
         assert endpoint == "https://eu.api.ocr.space/parse/image"
 
-    def test_get_size_limit_free(self):
+    def test_get_size_limit_free(self, mock_env_free):
         """Test free tier size limit."""
-        limit = get_size_limit(Tier.FREE)
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
+        limit = client.get_size_limit(Tier.FREE)
         assert limit == FREE_SIZE_LIMIT
         assert limit == 1 * 1024 * 1024
 
-    def test_get_size_limit_pro(self):
+    def test_get_size_limit_pro(self, mock_env_free):
         """Test PRO tier size limit."""
-        limit = get_size_limit(Tier.PRO)
+        get_settings.cache_clear()
+        client = OCRSpaceClient()
+        limit = client.get_size_limit(Tier.PRO)
         assert limit == PRO_SIZE_LIMIT
         assert limit == 5 * 1024 * 1024
 
@@ -204,7 +229,8 @@ class TestResultFormatting:
 
     def test_format_ocr_result_success(self, sample_ocr_response):
         """Test formatting successful OCR result."""
-        output = format_ocr_result(sample_ocr_response)
+        response = OCRResponse.model_validate(sample_ocr_response)
+        output = format_ocr_result(response)
         assert "Status: Success" in output
         assert "Hello World" in output
         assert "This is a test document" in output
@@ -212,7 +238,8 @@ class TestResultFormatting:
 
     def test_format_ocr_result_multipage(self, sample_multipage_response):
         """Test formatting multi-page result."""
-        output = format_ocr_result(sample_multipage_response)
+        response = OCRResponse.model_validate(sample_multipage_response)
+        output = format_ocr_result(response)
         assert "Pages processed: 3" in output
         assert "[Page 1]" in output
         assert "[Page 2]" in output
@@ -222,25 +249,29 @@ class TestResultFormatting:
 
     def test_format_ocr_result_partial_failure(self):
         """Test formatting partial failure."""
-        result = {"OCRExitCode": 2, "ParsedResults": []}
-        output = format_ocr_result(result)
+        response = OCRResponse.model_validate({"OCRExitCode": 2, "ParsedResults": []})
+        output = format_ocr_result(response)
         assert "Partial success" in output
 
     def test_format_ocr_result_failure(self):
         """Test formatting complete failure."""
-        result = {"OCRExitCode": 3, "ParsedResults": [], "ErrorMessage": "Invalid file"}
-        output = format_ocr_result(result)
+        response = OCRResponse.model_validate(
+            {"OCRExitCode": 3, "ParsedResults": [], "ErrorMessage": "Invalid file"}
+        )
+        output = format_ocr_result(response)
         assert "Status: Failed" in output
         assert "Invalid file" in output
 
     def test_extract_text_only(self, sample_ocr_response):
         """Test extracting text only."""
-        text = extract_text_only(sample_ocr_response)
+        response = OCRResponse.model_validate(sample_ocr_response)
+        text = extract_text_only(response)
         assert text == "Hello World\nThis is a test document."
 
     def test_extract_text_only_multipage(self, sample_multipage_response):
         """Test extracting text from multiple pages."""
-        text = extract_text_only(sample_multipage_response)
+        response = OCRResponse.model_validate(sample_multipage_response)
+        text = extract_text_only(response)
         assert "Page 1 content" in text
         assert "Page 2 content" in text
         assert "Page 3 content" in text
@@ -252,36 +283,36 @@ class TestResultFormatting:
 class TestFileSaving:
     """Test result file saving."""
 
-    @pytest.mark.asyncio
-    async def test_save_result_txt(self, sample_ocr_response):
+    def test_save_result_txt(self, sample_ocr_response):
         """Test saving as text file."""
+        response = OCRResponse.model_validate(sample_ocr_response)
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "output.txt"
-            saved = await save_result(sample_ocr_response, str(output_path), "txt")
+            saved = save_result(response, str(output_path), "txt")
 
             assert Path(saved).exists()
             content = Path(saved).read_text()
             assert "Hello World" in content
             assert "This is a test document" in content
 
-    @pytest.mark.asyncio
-    async def test_save_result_json(self, sample_ocr_response):
+    def test_save_result_json(self, sample_ocr_response):
         """Test saving as JSON file."""
+        response = OCRResponse.model_validate(sample_ocr_response)
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "output.json"
-            saved = await save_result(sample_ocr_response, str(output_path), "json")
+            saved = save_result(response, str(output_path), "json")
 
             assert Path(saved).exists()
             content = json.loads(Path(saved).read_text())
             assert content["OCRExitCode"] == 1
             assert len(content["ParsedResults"]) == 1
 
-    @pytest.mark.asyncio
-    async def test_save_result_creates_directory(self, sample_ocr_response):
+    def test_save_result_creates_directory(self, sample_ocr_response):
         """Test that saving creates parent directories."""
+        response = OCRResponse.model_validate(sample_ocr_response)
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "subdir" / "nested" / "output.txt"
-            saved = await save_result(sample_ocr_response, str(output_path), "txt")
+            saved = save_result(response, str(output_path), "txt")
             assert Path(saved).exists()
 
 
@@ -295,58 +326,69 @@ class TestAPICall:
     @respx.mock
     async def test_ocr_file_success(self, mock_env_free, temp_image_file, sample_ocr_response):
         """Test successful file OCR."""
+        get_settings.cache_clear()
         respx.post(FREE_ENDPOINT).mock(return_value=httpx.Response(200, json=sample_ocr_response))
 
-        result = await call_ocr_api(Tier.FREE, file_path=temp_image_file)
+        async with get_client() as client:
+            result = await client.ocr(Tier.FREE, file_path=temp_image_file)
 
-        assert result["OCRExitCode"] == 1
-        assert len(result["ParsedResults"]) == 1
+        assert result.exit_code == 1
+        assert len(result.parsed_results) == 1
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_ocr_url_success(self, mock_env_free, sample_ocr_response):
         """Test successful URL OCR."""
+        get_settings.cache_clear()
         respx.post(FREE_ENDPOINT).mock(return_value=httpx.Response(200, json=sample_ocr_response))
 
-        result = await call_ocr_api(Tier.FREE, url="https://example.com/image.png")
+        async with get_client() as client:
+            result = await client.ocr(Tier.FREE, url="https://example.com/image.png")
 
-        assert result["OCRExitCode"] == 1
+        assert result.exit_code == 1
 
     @pytest.mark.asyncio
     async def test_ocr_file_not_found(self, mock_env_free):
         """Test error when file not found."""
-        with pytest.raises(FileNotFoundError):
-            await call_ocr_api(Tier.FREE, file_path="/nonexistent/file.png")
+        get_settings.cache_clear()
+        async with get_client() as client:
+            with pytest.raises(FileNotFoundError):
+                await client.ocr(Tier.FREE, file_path="/nonexistent/file.png")
 
     @pytest.mark.asyncio
     async def test_ocr_file_too_large_free(self, mock_env_free, temp_large_file):
         """Test error when file exceeds free tier limit."""
-        with pytest.raises(ValueError, match="exceeds free tier limit"):
-            await call_ocr_api(Tier.FREE, file_path=temp_large_file)
+        get_settings.cache_clear()
+        async with get_client() as client:
+            with pytest.raises(ValueError, match="exceeds free tier limit"):
+                await client.ocr(Tier.FREE, file_path=temp_large_file)
 
     @pytest.mark.asyncio
     async def test_ocr_no_input(self, mock_env_free):
         """Test error when no input provided."""
-        with pytest.raises(ValueError, match="Must provide"):
-            await call_ocr_api(Tier.FREE)
+        get_settings.cache_clear()
+        async with get_client() as client:
+            with pytest.raises(ValueError, match="Must provide"):
+                await client.ocr(Tier.FREE)
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_ocr_with_options(self, mock_env_free, temp_image_file, sample_ocr_response):
         """Test OCR with various options."""
+        get_settings.cache_clear()
         route = respx.post(FREE_ENDPOINT).mock(
             return_value=httpx.Response(200, json=sample_ocr_response)
         )
 
-        await call_ocr_api(
-            Tier.FREE,
-            file_path=temp_image_file,
+        options = OCROptions(
             language="ger",
             ocr_engine=2,
             detect_orientation=True,
             scale=True,
             is_table=True,
         )
+        async with get_client() as client:
+            await client.ocr(Tier.FREE, file_path=temp_image_file, options=options)
 
         # Verify request was made with correct parameters
         assert route.called
@@ -391,6 +433,7 @@ class TestMCPTools:
     @pytest.mark.asyncio
     async def test_check_tier_status_free_only(self, mock_env_free):
         """Test tier status with only free tier configured."""
+        get_settings.cache_clear()
         result = await call_tool("check_tier_status", {})
         text = result[0].text
         assert "Free Tier: Configured" in text
@@ -399,6 +442,7 @@ class TestMCPTools:
     @pytest.mark.asyncio
     async def test_check_tier_status_both_tiers(self, mock_env_pro):
         """Test tier status with both tiers configured."""
+        get_settings.cache_clear()
         result = await call_tool("check_tier_status", {})
         text = result[0].text
         assert "Free Tier: Configured" in text
@@ -409,6 +453,7 @@ class TestMCPTools:
     @respx.mock
     async def test_ocr_file_tool(self, mock_env_free, temp_image_file, sample_ocr_response):
         """Test ocr_file tool."""
+        get_settings.cache_clear()
         respx.post(FREE_ENDPOINT).mock(return_value=httpx.Response(200, json=sample_ocr_response))
 
         result = await call_tool("ocr_file", {"file_path": temp_image_file})
@@ -423,6 +468,7 @@ class TestMCPTools:
         self, mock_env_free, temp_image_file, sample_ocr_response
     ):
         """Test ocr_file tool with file saving."""
+        get_settings.cache_clear()
         respx.post(FREE_ENDPOINT).mock(return_value=httpx.Response(200, json=sample_ocr_response))
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -649,6 +695,7 @@ class TestOCRAutoTool:
     @respx.mock
     async def test_ocr_auto_small_image(self, mock_env_free, temp_image_file, sample_ocr_response):
         """Test ocr_auto with small image (no compression needed)."""
+        get_settings.cache_clear()
         respx.post(FREE_ENDPOINT).mock(return_value=httpx.Response(200, json=sample_ocr_response))
 
         result = await call_tool("ocr_auto", {"file_path": temp_image_file})
@@ -662,6 +709,7 @@ class TestOCRAutoTool:
     @respx.mock
     async def test_ocr_auto_with_output(self, mock_env_free, temp_image_file, sample_ocr_response):
         """Test ocr_auto with output file saving."""
+        get_settings.cache_clear()
         respx.post(FREE_ENDPOINT).mock(return_value=httpx.Response(200, json=sample_ocr_response))
 
         with tempfile.TemporaryDirectory() as tmpdir:
