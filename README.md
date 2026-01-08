@@ -87,6 +87,26 @@ Add to `.mcp.json`:
 }
 ```
 
+### OpenCode Config
+
+Add to `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "ocr-space": {
+      "command": "uv",
+      "args": ["run", "--project", "/path/to/ocr-space-mcp", "ocr-space-mcp"],
+      "env": {
+        "OCR_SPACE_API_KEY": "${OCR_SPACE_API_KEY}",
+        "OCR_SPACE_PRO_API_KEY": "${OCR_SPACE_PRO_API_KEY}",
+        "OCR_SPACE_PRO_ENDPOINT": "${OCR_SPACE_PRO_ENDPOINT}"
+      }
+    }
+  }
+}
+```
+
 ## Usage
 
 ### Check Configuration
